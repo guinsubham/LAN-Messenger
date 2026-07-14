@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Local build outputs
+build/
+dist/
+*.spec
+*.zip
+
+# Local/generated packager dependency folders
+.build_tools/
+*_packager/
+packager_tools/
+build_pyinstaller_runtime/
+
+# Local test/scratch folders
+.*-test/
+LANMessengerData/
+LANMessenger-Mac-Build-*/
+LANMessenger-Mac-Source-*/
+Path Test Folder/
+
+# Generated debug/render artifacts
+emoji_render_test_*.png
+/typing_indicator_preview.gif
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
