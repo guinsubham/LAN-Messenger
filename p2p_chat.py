@@ -77,7 +77,7 @@ except ImportError:
 
 
 APP_NAME = "LAN Messenger"
-APP_VERSION = "1.0.62"
+APP_VERSION = "1.0.63"
 APP_MUTEX_HANDLE = None
 GITHUB_REPO = "guinsubham/LAN-Messenger"
 GITHUB_LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -2716,7 +2716,7 @@ class ChatApp:
             if kind == "peers":
                 self._set_peers(event[1])
             elif kind == "new_peer":
-                play_sound("new_user_online")
+                pass
             elif kind == "message":
                 sender_id, sender, text = event[1], event[2], event[3]
                 play_sound("incoming_message")
