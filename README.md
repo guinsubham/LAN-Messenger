@@ -37,6 +37,27 @@ The Mac app will be created at:
 dist/LANMessenger.app
 ```
 
+The Mac release ZIP will be created at:
+
+```text
+dist/LANMessenger-macOS.zip
+```
+
+## GitHub Releases and Updates
+
+The in-app `Update` button checks the latest GitHub release at:
+
+```text
+https://github.com/guinsubham/LAN-Messenger/releases/latest
+```
+
+Attach platform-specific files to each release:
+
+- Windows: `LANMessenger-Windows.exe`
+- macOS: `LANMessenger-macOS.zip`
+
+The macOS ZIP must contain `LANMessenger.app`; the `build_mac.command` script creates this ZIP automatically on a Mac.
+
 Open the app on two computers on the same Wi-Fi or wired LAN. Choose a display name, then the main window will show online users and their status. Set your own status from the top bar: `Available`, `AFK`, or `Offline`. Double-click a user to open a separate conversation window where you can send messages, add emojis, switch dark mode on or off, and send files. Windows also supports drag and drop file sending. On Mac, use `Send File(s)` because the third-party drag-and-drop extension is disabled for stability. Today's chat history is shown automatically, and the `History` button shows all older saved history for that user. Web links and local file paths, including Windows paths with spaces, become clickable automatically. Received files show an `Open Location` button.
 
 Notification sounds play when a message arrives, a file is received, or a new user comes online.

@@ -11,13 +11,16 @@ fi
 python3 -m pip install --user --upgrade pip setuptools wheel
 
 python3 -m pip install --user --only-binary=:all: --upgrade \
-  pyinstaller
+  pyinstaller \
+  tkinterdnd2
 
 python3 -m PyInstaller \
   --noconfirm \
   --clean \
   --windowed \
   --name LANMessenger \
+  --collect-all tkinterdnd2 \
+  --hidden-import tkinterdnd2 \
   --add-data "assets/app_icon.png:assets" \
   --add-data "assets/app_icon.ico:assets" \
   --add-data "assets/Incoming_msg.wav:assets" \
@@ -26,8 +29,11 @@ python3 -m PyInstaller \
   --add-data "assets/typing_indicator_preview.gif:assets" \
   p2p_chat.py
 
+ditto -c -k --sequesterRsrc --keepParent "dist/LANMessenger.app" "dist/LANMessenger-macOS.zip"
+
 echo
 echo "Mac app created at: dist/LANMessenger.app"
 echo "Command-line executable created at: dist/LANMessenger/LANMessenger"
+echo "GitHub release ZIP created at: dist/LANMessenger-macOS.zip"
 echo
 echo "To open it: double-click dist/LANMessenger.app"

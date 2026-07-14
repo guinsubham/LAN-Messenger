@@ -12,9 +12,12 @@ import threading
 import time
 import uuid
 import webbrowser
+import zipfile
 from datetime import datetime
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
+from urllib.request import Request, urlopen
 from tkinter import (
     BOTH,
     Canvas,
@@ -54,8 +57,6 @@ except ImportError:
     TRAY_AVAILABLE = False
 
 try:
-    if sys.platform == "darwin":
-        raise ImportError("drag-and-drop extension is disabled on macOS builds")
     from tkinterdnd2 import DND_FILES, TkinterDnD
 
     DND_AVAILABLE = True
@@ -76,8 +77,10 @@ except ImportError:
 
 
 APP_NAME = "LAN Messenger"
-APP_VERSION = "1.0.61"
+APP_VERSION = "1.0.62"
 APP_MUTEX_HANDLE = None
+GITHUB_REPO = "guinsubham/LAN-Messenger"
+GITHUB_LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 STARTUP_ARG = "--startup"
 UPDATED_CHILD_ARG = "--updated-child"
 SETTLED_ARG = "--settled-child"
@@ -865,6 +868,73 @@ def current_update_package():
     return package if package.exists() else None
 
 
+def http_json(url):
+    request = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": f"{APP_NAME}/{APP_VERSION}"})
+    with urlopen(request, timeout=20) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def github_release_version(release):
+    tag = str(release.get("tag_name") or release.get("name") or "0.0.0")
+    return tag.lstrip("vV")
+
+
+def select_release_asset(release):
+    platform = current_update_platform()
+    assets = release.get("assets") or []
+    if not isinstance(assets, list):
+        assets = []
+
+    def asset_name(asset):
+        return str(asset.get("name", "")).lower()
+
+    if platform == "windows":
+        for asset in assets:
+            name = asset_name(asset)
+            if name.endswith(".exe") and "mac" not in name and "darwin" not in name and "osx" not in name:
+                return asset
+        for asset in assets:
+            name = asset_name(asset)
+            if "windows" in name or "win" in name:
+                return asset
+    elif platform == "macos":
+        for asset in assets:
+            name = asset_name(asset)
+            if (name.endswith(".app.zip") or "macos" in name or "darwin" in name or "osx" in name) and not name.endswith(".exe"):
+                if "source" not in name and "build" not in name:
+                    return asset
+        for asset in assets:
+            name = asset_name(asset)
+            if ("mac" in name or "darwin" in name or "osx" in name) and not name.endswith(".exe"):
+                if "source" not in name and "build" not in name:
+                    return asset
+        for asset in assets:
+            name = asset_name(asset)
+            if "source" not in name and "build" not in name and name.endswith(".zip") and "win" not in name and "windows" not in name:
+                return asset
+    return None
+
+
+def find_launchable_in_update(path):
+    path = Path(path)
+    if sys.platform == "darwin" and path.suffix.lower() == ".zip":
+        extract_dir = path.with_suffix("")
+        if extract_dir.exists():
+            import shutil
+
+            shutil.rmtree(extract_dir, ignore_errors=True)
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(path) as archive:
+            archive.extractall(extract_dir)
+        apps = list(extract_dir.rglob("*.app"))
+        if apps:
+            return apps[0]
+        executables = [item for item in extract_dir.rglob("*") if item.is_file() and os.access(item, os.X_OK)]
+        if executables:
+            return executables[0]
+    return path
+
+
 def file_sha256(path):
     digest = hashlib.sha256()
     with open(path, "rb") as source:
@@ -1011,6 +1081,9 @@ def maybe_launch_pending_update():
         if sys.platform.startswith("win"):
             launcher = _windows_update_launcher(path.resolve(), current_exe, expected_size)
             subprocess.Popen([str(launcher)], cwd=str(launcher.parent), creationflags=subprocess.CREATE_NO_WINDOW)
+            return True
+        if sys.platform == "darwin" and path.suffix.lower() == ".app":
+            subprocess.Popen(["open", "-n", str(path), "--args", UPDATED_CHILD_ARG], cwd=str(path.parent))
             return True
         command = [str(path)]
     else:
@@ -1668,6 +1741,49 @@ class ChatNetwork:
                 return True
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             self.event_queue.put(("error", f"Could not download update from {peer['name']}: {exc}"))
+            return False
+
+    def request_github_update(self):
+        try:
+            release = http_json(GITHUB_LATEST_RELEASE_API)
+            version = github_release_version(release)
+            if not is_newer_version(version):
+                self.event_queue.put(("already_latest", version))
+                return False
+            asset = select_release_asset(release)
+            if not asset:
+                raise ValueError(f"No {current_update_platform()} asset found in latest GitHub release {version}.")
+            url = asset.get("browser_download_url")
+            if not url:
+                raise ValueError("GitHub release asset does not have a download URL.")
+            size = int(asset.get("size") or 0)
+            filename = safe_filename(asset.get("name") or f"LANMessenger-{version}")
+            target_dir = get_updates_dir() / version
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target = target_dir / filename
+            request = Request(url, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
+            downloaded = 0
+            self.event_queue.put(("update_progress", 0, max(1, size)))
+            with urlopen(request, timeout=60) as response, open(target, "wb") as output:
+                total = size or int(response.headers.get("Content-Length") or 0) or 1
+                while True:
+                    chunk = response.read(BUFFER_SIZE)
+                    if not chunk:
+                        break
+                    output.write(chunk)
+                    downloaded += len(chunk)
+                    self.event_queue.put(("update_progress", downloaded, total))
+            if size and target.stat().st_size != size:
+                target.unlink(missing_ok=True)
+                raise OSError("downloaded update size did not match GitHub release asset")
+            launch_target = find_launchable_in_update(target)
+            if not sys.platform.startswith("win") and launch_target.is_file():
+                launch_target.chmod(launch_target.stat().st_mode | 0o111)
+            save_pending_update(version, launch_target, current_update_platform(), launch_target.stat().st_size if launch_target.is_file() else None)
+            self.event_queue.put(("update_downloaded", version, str(launch_target)))
+            return True
+        except (OSError, ValueError, HTTPError, URLError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
+            self.event_queue.put(("error", f"Could not download update from GitHub: {exc}"))
             return False
 
     def _send_payload(self, peer, payload, file_path=None):
@@ -2661,6 +2777,9 @@ class ChatApp:
                 downloaded, total = event[1], max(1, event[2])
                 percent = min(100, int(downloaded * 100 / total))
                 self._show_update_progress(percent)
+            elif kind == "already_latest":
+                self._hide_update_progress()
+                show_themed_info(self.root, APP_NAME, f"Already on latest version {APP_VERSION}", self.dark_mode)
             elif kind == "error":
                 messagebox.showwarning(APP_NAME, event[1])
 
@@ -2750,35 +2869,12 @@ class ChatApp:
         self.events.put(("broadcast_done", sent, len(peers)))
 
     def check_for_update(self):
-        same_platform_peers = [
-            peer
-            for peer in self.peer_rows
-            if peer.get("platform") == current_update_platform()
-        ]
-        candidates = [peer for peer in same_platform_peers if is_newer_version(peer.get("version", "0.0.0"))]
-        if not candidates:
-            if same_platform_peers:
-                show_themed_info(self.root, APP_NAME, f"Already on latest version {APP_VERSION}", self.dark_mode)
-            else:
-                show_themed_info(
-                    self.root,
-                    APP_NAME,
-                    f"No same-platform online users found.\n\nCurrent version: {APP_VERSION}",
-                    self.dark_mode,
-                )
-            return
-        peer = sorted(candidates, key=lambda item: version_tuple(item.get("version", "0.0.0")), reverse=True)[0]
-        if not messagebox.askyesno(APP_NAME, f"Version {peer.get('version')} is available from {peer['name']}.\n\nDownload it now?"):
-            return
         self.update_button.configure(state="disabled")
-        threading.Thread(target=self._update_worker, args=(peer,), daemon=True).start()
+        self._show_update_progress(0)
+        threading.Thread(target=self._update_worker, daemon=True).start()
 
     def _has_available_update(self):
-        return any(
-            peer.get("platform") == current_update_platform()
-            and is_newer_version(peer.get("version", "0.0.0"))
-            for peer in self.peer_rows
-        )
+        return False
 
     def _refresh_update_badge(self):
         if self._has_available_update():
@@ -2792,9 +2888,9 @@ class ChatApp:
         self.update_badge.create_oval(1, 1, 14, 14, fill="#dc2626", outline="#dc2626")
         self.update_badge.create_text(7.5, 7, text="!", fill="#ffffff", font=FONT_SMALL)
 
-    def _update_worker(self, peer):
+    def _update_worker(self):
         try:
-            self.network.request_update(peer)
+            self.network.request_github_update()
         finally:
             self.events.put(("update_button_ready",))
 
@@ -2808,6 +2904,8 @@ class ChatApp:
                 if sys.platform.startswith("win"):
                     launcher = _windows_update_launcher(path.resolve(), Path(sys.executable).resolve(), path.stat().st_size)
                     subprocess.Popen([str(launcher)], cwd=str(launcher.parent), creationflags=subprocess.CREATE_NO_WINDOW)
+                elif sys.platform == "darwin" and path.suffix.lower() == ".app":
+                    subprocess.Popen(["open", "-n", str(path), "--args", UPDATED_CHILD_ARG], cwd=str(path.parent))
                 else:
                     subprocess.Popen([str(path), UPDATED_CHILD_ARG], cwd=str(path.parent))
             else:

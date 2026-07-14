@@ -9,12 +9,14 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 python3 -m pip install --user --upgrade pip setuptools wheel
-python3 -m pip install --user --only-binary=:all: --upgrade pyinstaller
+python3 -m pip install --user --only-binary=:all: --upgrade pyinstaller tkinterdnd2
 
 python3 -m PyInstaller \
   --noconfirm \
   --clean \
   --name LANMessengerDebug \
+  --collect-all tkinterdnd2 \
+  --hidden-import tkinterdnd2 \
   --add-data "assets/app_icon.png:assets" \
   --add-data "assets/app_icon.ico:assets" \
   --add-data "assets/Incoming_msg.wav:assets" \
